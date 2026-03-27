@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "orders": {
+      "title": "Orders",
+      "description": "Customer orders from the landing page",
+      "type": "object",
+      "properties": {
+        "customerName": { "type": "string", "description": "Name of the customer" },
+        "phone": { "type": "string", "description": "Phone number of the customer" },
+        "address": { "type": "string", "description": "Delivery address" },
+        "items": { "type": "array", "items": { "type": "object" }, "description": "Ordered items" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "shipped", "delivered", "cancelled"], "description": "Order status" },
+        "courierStatus": { "type": "string", "description": "Status from courier service" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Order creation time" }
+      },
+      "required": ["customerName", "phone", "address", "items", "status", "createdAt"]
+    },
+    "inventory": {
+      "title": "Inventory",
+      "description": "Product stock management",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Product name" },
+        "stock": { "type": "integer", "description": "Available stock" },
+        "price": { "type": "number", "description": "Product price" }
+      },
+      "required": ["name", "stock", "price"]
+    },
+    "pixelConfig": {
+      "title": "Pixel Configuration",
+      "description": "Facebook/Google Pixel settings",
+      "type": "object",
+      "properties": {
+        "pixelId": { "type": "string", "description": "The Pixel ID" },
+        "enabled": { "type": "boolean", "description": "Whether the pixel is active" }
+      },
+      "required": ["pixelId", "enabled"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "orders",
+      "description": "Individual order documents"
+    },
+    "/inventory/{itemId}": {
+      "schema": "inventory",
+      "description": "Inventory items"
+    },
+    "/pixelConfig/{configId}": {
+      "schema": "pixelConfig",
+      "description": "Pixel settings"
+    }
+  }
+}

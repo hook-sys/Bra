@@ -21,10 +21,21 @@ import {
   Play,
   Loader2,
   Video,
-  Check
+  Check,
+  Settings, Package, ShoppingCart, Truck, LayoutDashboard, LogOut, 
+  Eye, BarChart3, TrendingUp, Search, Filter, ArrowUpRight, 
+  ArrowDownRight, MoreVertical, Trash2, Edit, Save, Plus
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { db, auth } from "./firebase";
+import { 
+  collection, addDoc, getDocs, updateDoc, deleteDoc, 
+  doc, onSnapshot, query, orderBy, serverTimestamp, setDoc, getDoc
+} from "firebase/firestore";
+import { 
+  signInWithEmailAndPassword, onAuthStateChanged, signOut 
+} from "firebase/auth";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -36,10 +47,184 @@ export default function App() {
   const [selectedColor, setSelectedColor] = useState("Black");
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [dragConstraints, setDragConstraints] = useState({ left: 0, right: 0 });
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [orders, setOrders] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [pixelId, setPixelId] = useState("");
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [scrollEvents, setScrollEvents] = useState({ p50: false, p75: false, p95: false });
+  const [orderForm, setOrderForm] = useState({
+    name: "",
+    phone: "",
+    address: "",
+    quantity: 1
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [isInventoryLoading, setIsInventoryLoading] = useState(false);
+  const [isPixelUpdating, setIsPixelUpdating] = useState(false);
+
   const carouselRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const videoSectionRef = useRef<HTMLElement>(null);
   const isVideoInView = useInView(videoSectionRef, { amount: 0.5, once: true });
+
+  // Scroll Tracking Logic
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollPercent = (window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100;
+      
+      if (scrollPercent >= 50 && !scrollEvents.p50) {
+        setScrollEvents(prev => ({ ...prev, p50: true }));
+        triggerPixelEvent("ViewContent_50");
+      }
+      if (scrollPercent >= 75 && !scrollEvents.p75) {
+        setScrollEvents(prev => ({ ...prev, p75: true }));
+        triggerPixelEvent("ViewContent_75");
+      }
+      if (scrollPercent >= 95 && !scrollEvents.p95) {
+        setScrollEvents(prev => ({ ...prev, p95: true }));
+        triggerPixelEvent("ViewContent_95");
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [scrollEvents, pixelId]);
+
+  const triggerPixelEvent = (eventName: string) => {
+    if (!pixelId) return;
+    console.log(`[Pixel] Triggering ${eventName} for ID: ${pixelId}`);
+    // Real pixel implementation would go here (fbq, gtag, etc.)
+    if ((window as any).fbq) {
+      (window as any).fbq('trackCustom', eventName);
+    }
+  };
+
+  // Auth & Data Fetching
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && user.email === "hmsolyman33@gmail.com") {
+        setIsLoggedIn(true);
+      } else {
+        setIsLoggedIn(false);
+      }
+    });
+
+    // Fetch Pixel Config
+    const fetchPixel = async () => {
+      const docRef = doc(db, "pixelConfig", "main");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setPixelId(docSnap.data().pixelId);
+      }
+    };
+    fetchPixel();
+
+    return () => unsubscribe();
+  }, []);
+
+  // Load Facebook Pixel Script
+  useEffect(() => {
+    if (!pixelId) return;
+
+    const script = document.createElement('script');
+    script.innerHTML = `
+      !function(f,b,e,v,n,t,s)
+      {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+      n.queue=[];t=b.createElement(e);t.async=!0;
+      t.src=v;s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s)}(window, document,'script',
+      'https://connect.facebook.net/en_US/fbevents.js');
+      fbq('init', '${pixelId}');
+      fbq('track', 'PageView');
+    `;
+    document.head.appendChild(script);
+
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, [pixelId]);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+      const unsubscribeOrders = onSnapshot(q, (snapshot) => {
+        setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      const unsubscribeInventory = onSnapshot(collection(db, "inventory"), (snapshot) => {
+        setInventory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      return () => {
+        unsubscribeOrders();
+        unsubscribeInventory();
+      };
+    }
+  }, [isLoggedIn]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminEmail === "hmsolyman33@gmail.com" && adminPassword === "87654321") {
+      try {
+        await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
+      } catch (error: any) {
+        alert("Login failed: " + error.message);
+      }
+    } else {
+      alert("Invalid credentials");
+    }
+  };
+
+  const handleLogout = () => {
+    signOut(auth);
+    setIsAdminMode(false);
+  };
+
+  const handleOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, "orders"), {
+        customerName: orderForm.name,
+        phone: orderForm.phone,
+        address: orderForm.address,
+        items: [{ name: "Magic Performance Sports Bra", size: selectedSize, color: selectedColor, quantity: orderForm.quantity }],
+        status: "pending",
+        createdAt: serverTimestamp()
+      });
+      setOrderSuccess(true);
+      triggerPixelEvent("Purchase");
+    } catch (error: any) {
+      alert("Order failed: " + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updatePixelId = async (newId: string) => {
+    try {
+      await setDoc(doc(db, "pixelConfig", "main"), { pixelId: newId, enabled: true });
+      setPixelId(newId);
+      alert("Pixel ID updated!");
+    } catch (error: any) {
+      alert("Update failed: " + error.message);
+    }
+  };
+
+  const updateOrderStatus = async (orderId: string, status: string) => {
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status });
+    } catch (error: any) {
+      alert("Update failed: " + error.message);
+    }
+  };
 
   const galleryImages = [
     "https://i.ibb.co/v4hy9Xcn/header.jpg",
@@ -145,6 +330,404 @@ export default function App() {
       setIsMenuOpen(false);
     }
   };
+
+  if (isAdminMode) {
+    if (!isLoggedIn) {
+      return (
+        <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md bg-white rounded-[2.5rem] p-10 shadow-xl border border-stone-100"
+          >
+            <div className="text-center mb-8">
+              <div className="w-16 h-16 bg-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-rose-200">
+                <ShieldCheck className="w-8 h-8 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-stone-900">Admin Login</h2>
+              <p className="text-stone-500 text-sm mt-2">Enter your credentials to access the panel</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-widest ml-1">Email Address</label>
+                <input 
+                  type="email" 
+                  required
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none"
+                  placeholder="admin@example.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-widest ml-1">Password</label>
+                <input 
+                  type="password" 
+                  required
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none"
+                  placeholder="••••••••"
+                />
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-rose-200 flex items-center justify-center gap-2"
+              >
+                Login to Dashboard <ChevronRight className="w-5 h-5" />
+              </button>
+              <button 
+                type="button"
+                onClick={() => setIsAdminMode(false)}
+                className="w-full text-stone-400 font-bold py-2 hover:text-stone-600 transition-colors"
+              >
+                Back to Store
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-stone-50 flex">
+        {/* Sidebar */}
+        <aside className="w-64 bg-white border-r border-stone-100 hidden lg:flex flex-col">
+          <div className="p-8 flex items-center gap-3">
+            <div className="w-8 h-8 bg-rose-500 rounded-lg flex items-center justify-center">
+              <Heart className="w-5 h-5 text-white fill-current" />
+            </div>
+            <span className="font-bold text-stone-900">Magic Admin</span>
+          </div>
+
+          <nav className="flex-1 px-4 space-y-2">
+            {[
+              { id: 'dashboard', icon: <LayoutDashboard className="w-5 h-5" />, label: 'Dashboard' },
+              { id: 'orders', icon: <ShoppingCart className="w-5 h-5" />, label: 'Orders' },
+              { id: 'inventory', icon: <Package className="w-5 h-5" />, label: 'Inventory' },
+              { id: 'pixel', icon: <Settings className="w-5 h-5" />, label: 'Pixel Setup' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all",
+                  activeTab === item.id 
+                    ? "bg-rose-50 text-rose-600 shadow-sm" 
+                    : "text-stone-500 hover:bg-stone-50 hover:text-stone-900"
+                )}
+              >
+                {item.icon} {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="p-4 border-t border-stone-100">
+            <button 
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-stone-500 hover:bg-rose-50 hover:text-rose-600 transition-all"
+            >
+              <LogOut className="w-5 h-5" /> Logout
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto">
+          <header className="bg-white border-b border-stone-100 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
+            <h2 className="text-xl font-bold text-stone-900 capitalize">{activeTab}</h2>
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => setIsAdminMode(false)}
+                className="text-sm font-bold text-rose-500 bg-rose-50 px-4 py-2 rounded-full"
+              >
+                View Store
+              </button>
+              <div className="w-10 h-10 bg-stone-100 rounded-full flex items-center justify-center">
+                <ShieldCheck className="w-6 h-6 text-stone-400" />
+              </div>
+            </div>
+          </header>
+
+          <div className="p-8">
+            {activeTab === 'dashboard' && (
+              <div className="space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {[
+                    { label: 'Total Orders', value: orders.length, icon: <ShoppingCart />, color: 'bg-blue-500' },
+                    { label: 'Pending', value: orders.filter(o => o.status === 'pending').length, icon: <Loader2 />, color: 'bg-amber-500' },
+                    { label: 'Completed', value: orders.filter(o => o.status === 'completed').length, icon: <CheckCircle2 />, color: 'bg-green-500' },
+                    { label: 'Pixel Status', value: pixelId ? 'Active' : 'Missing', icon: <Settings />, color: 'bg-rose-500' },
+                  ].map((stat, i) => (
+                    <div key={i} className="bg-white p-6 rounded-3xl border border-stone-100 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center text-white", stat.color)}>
+                          {stat.icon}
+                        </div>
+                        <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">Stats</span>
+                      </div>
+                      <p className="text-stone-500 text-sm font-medium">{stat.label}</p>
+                      <h3 className="text-2xl font-bold text-stone-900">{stat.value}</h3>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-white rounded-[2rem] border border-stone-100 shadow-sm overflow-hidden">
+                  <div className="p-6 border-b border-stone-100 flex items-center justify-between">
+                    <h3 className="font-bold text-stone-900">Recent Orders</h3>
+                    <button onClick={() => setActiveTab('orders')} className="text-sm font-bold text-rose-500">View All</button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-stone-50 text-stone-400 text-xs uppercase tracking-widest">
+                        <tr>
+                          <th className="px-6 py-4">Customer</th>
+                          <th className="px-6 py-4">Status</th>
+                          <th className="px-6 py-4">Date</th>
+                          <th className="px-6 py-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-50">
+                        {orders.slice(0, 5).map((order) => (
+                          <tr key={order.id} className="hover:bg-stone-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <p className="font-bold text-stone-900">{order.customerName}</p>
+                              <p className="text-xs text-stone-400">{order.phone}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                                order.status === 'pending' ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-600"
+                              )}>
+                                {order.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-stone-500">
+                              {order.createdAt?.toDate().toLocaleDateString()}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button 
+                                onClick={() => updateOrderStatus(order.id, order.status === 'pending' ? 'completed' : 'pending')}
+                                className="text-rose-500 hover:text-rose-600 font-bold text-xs"
+                              >
+                                Toggle Status
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'orders' && (
+              <div className="bg-white rounded-[2rem] border border-stone-100 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-stone-100">
+                  <h3 className="font-bold text-stone-900">All Orders ({orders.length})</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-stone-50 text-stone-400 text-xs uppercase tracking-widest">
+                      <tr>
+                        <th className="px-6 py-4">Customer & Contact</th>
+                        <th className="px-6 py-4">Address</th>
+                        <th className="px-6 py-4">Items</th>
+                        <th className="px-6 py-4">Status</th>
+                        <th className="px-6 py-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-50">
+                      {orders.map((order) => (
+                        <tr key={order.id} className="hover:bg-stone-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="font-bold text-stone-900">{order.customerName}</p>
+                            <p className="text-xs text-stone-400">{order.phone}</p>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-stone-500 max-w-xs truncate">
+                            {order.address}
+                          </td>
+                          <td className="px-6 py-4">
+                            {order.items?.map((item: any, idx: number) => (
+                              <p key={idx} className="text-xs text-stone-600">
+                                {item.name} ({item.size}/{item.color}) x{item.quantity}
+                              </p>
+                            ))}
+                          </td>
+                          <td className="px-6 py-4">
+                            <select 
+                              value={order.status}
+                              onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                              className="bg-stone-50 border-none rounded-lg px-3 py-1 text-xs font-bold outline-none"
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="processing">Processing</option>
+                              <option value="shipped">Shipped</option>
+                              <option value="completed">Completed</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                onClick={async () => {
+                                  if(confirm("Delete this order?")) {
+                                    await deleteDoc(doc(db, "orders", order.id));
+                                  }
+                                }}
+                                className="p-2 text-stone-400 hover:text-rose-500 transition-colors"
+                                title="Delete Order"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={async () => {
+                                  const bookingId = "STE-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+                                  await updateDoc(doc(db, "orders", order.id), { 
+                                    status: "shipped",
+                                    courierStatus: "booked",
+                                    bookingId: bookingId
+                                  });
+                                  alert(`Courier Booked! ID: ${bookingId}`);
+                                }}
+                                disabled={order.status === 'shipped' || order.status === 'completed'}
+                                className={cn(
+                                  "p-2 transition-colors",
+                                  order.status === 'shipped' || order.status === 'completed' 
+                                    ? "text-stone-200 cursor-not-allowed" 
+                                    : "text-stone-400 hover:text-blue-500"
+                                )}
+                                title="Book Courier"
+                              >
+                                <Truck className="w-4 h-4" />
+                              </button>
+                            </div>
+                            {order.bookingId && (
+                              <p className="text-[10px] text-blue-500 font-bold mt-1">ID: {order.bookingId}</p>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'inventory' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-bold text-stone-900">Inventory Management</h3>
+                  <button 
+                    onClick={async () => {
+                      const name = prompt("Item Name:");
+                      const stock = prompt("Stock Quantity:");
+                      const price = prompt("Price:");
+                      if(name && stock && price) {
+                        await addDoc(collection(db, "inventory"), { name, stock: parseInt(stock), price: parseInt(price) });
+                      }
+                    }}
+                    className="bg-rose-500 text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" /> Add Item
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {inventory.map((item) => (
+                    <div key={item.id} className="bg-white p-6 rounded-3xl border border-stone-100 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-10 h-10 bg-stone-50 rounded-xl flex items-center justify-center">
+                          <Package className="w-5 h-5 text-stone-400" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={async () => {
+                              const newStock = prompt("New Stock:", item.stock);
+                              if(newStock) await updateDoc(doc(db, "inventory", item.id), { stock: parseInt(newStock) });
+                            }}
+                            className="p-2 text-stone-400 hover:text-blue-500"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              if(confirm("Delete item?")) await deleteDoc(doc(db, "inventory", item.id));
+                            }}
+                            className="p-2 text-stone-400 hover:text-rose-500"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <h4 className="font-bold text-stone-900 mb-1">{item.name}</h4>
+                      <div className="flex items-center justify-between mt-4">
+                        <p className="text-sm text-stone-500">Stock: <span className={cn("font-bold", item.stock < 10 ? "text-rose-500" : "text-green-500")}>{item.stock}</span></p>
+                        <p className="text-lg font-bold text-rose-500">৳{item.price}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'pixel' && (
+              <div className="max-w-2xl">
+                <div className="bg-white p-10 rounded-[2.5rem] border border-stone-100 shadow-sm">
+                  <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-6">
+                    <BarChart3 className="w-8 h-8 text-blue-500" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-stone-900 mb-2">Facebook Pixel Setup</h3>
+                  <p className="text-stone-500 mb-8">Enter your Facebook Pixel ID to track events like ViewContent, Purchase, and Scroll depth.</p>
+
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-stone-400 uppercase tracking-widest ml-1">Pixel ID</label>
+                      <input 
+                        type="text" 
+                        value={pixelId}
+                        onChange={(e) => setPixelId(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-6 py-4 focus:ring-2 focus:ring-blue-500 transition-all outline-none"
+                        placeholder="e.g. 123456789012345"
+                      />
+                    </div>
+                    <button 
+                      onClick={() => updatePixelId(pixelId)}
+                      className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                    >
+                      <Save className="w-5 h-5" /> Save Configuration
+                    </button>
+                  </div>
+
+                  <div className="mt-10 p-6 bg-stone-50 rounded-2xl border border-stone-100">
+                    <h4 className="font-bold text-stone-900 mb-4 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-green-500" /> Active Events
+                    </h4>
+                    <ul className="space-y-3">
+                      {[
+                        'Purchase (on order success)',
+                        'ViewContent_50 (50% scroll)',
+                        'ViewContent_75 (75% scroll)',
+                        'ViewContent_95 (95% scroll)',
+                        'PageView (automatic)'
+                      ].map((ev, i) => (
+                        <li key={i} className="flex items-center gap-3 text-sm text-stone-600">
+                          <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
+                          {ev}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen font-sans selection:bg-rose-100 selection:text-rose-900">
@@ -543,21 +1126,61 @@ export default function App() {
               <p className="text-stone-400">নিচের ফর্মটি পূরণ করে আপনার অর্ডারটি সম্পন্ন করুন। আমাদের প্রতিনিধি আপনার সাথে যোগাযোগ করবেন।</p>
             </div>
 
-            <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
+            {orderSuccess ? (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center py-12 bg-rose-500/10 rounded-[2rem] border border-rose-500/20"
+              >
+                <div className="w-20 h-20 bg-rose-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-rose-500/20">
+                  <Check className="w-10 h-10 text-white" />
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-2">ধন্যবাদ! আপনার অর্ডারটি সফল হয়েছে।</h3>
+                <p className="text-stone-400 mb-8">আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।</p>
+                <button 
+                  onClick={() => setOrderSuccess(false)}
+                  className="bg-rose-500 text-white px-8 py-3 rounded-xl font-bold hover:bg-rose-600 transition-all"
+                >
+                  আরেকটি অর্ডার করুন
+                </button>
+              </motion.div>
+            ) : (
+              <form className="space-y-6" onSubmit={handleOrderSubmit}>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-stone-400 uppercase">আপনার নাম</label>
-                  <input type="text" placeholder="পুরো নাম লিখুন" className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none" />
+                  <input 
+                    type="text" 
+                    required
+                    value={orderForm.name}
+                    onChange={(e) => setOrderForm({ ...orderForm, name: e.target.value })}
+                    placeholder="পুরো নাম লিখুন" 
+                    className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none" 
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-stone-400 uppercase">মোবাইল নম্বর</label>
-                  <input type="tel" placeholder="০১৭XXXXXXXX" className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none" />
+                  <input 
+                    type="tel" 
+                    required
+                    value={orderForm.phone}
+                    onChange={(e) => setOrderForm({ ...orderForm, phone: e.target.value })}
+                    placeholder="০১৭XXXXXXXX" 
+                    className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none" 
+                  />
                 </div>
               </div>
 
               <div className="space-y-2">
                 <label className="text-sm font-bold text-stone-400 uppercase">পুরো ঠিকানা</label>
-                <textarea rows={3} placeholder="আপনার বর্তমান ঠিকানা লিখুন" className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none resize-none"></textarea>
+                <textarea 
+                  rows={3} 
+                  required
+                  value={orderForm.address}
+                  onChange={(e) => setOrderForm({ ...orderForm, address: e.target.value })}
+                  placeholder="আপনার বর্তমান ঠিকানা লিখুন" 
+                  className="w-full bg-stone-800 border-none rounded-2xl px-6 py-4 focus:ring-2 focus:ring-rose-500 transition-all outline-none resize-none"
+                ></textarea>
               </div>
 
               <div className="grid grid-cols-2 gap-6">
@@ -587,10 +1210,15 @@ export default function App() {
                 </div>
               </div>
 
-              <button className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-5 rounded-2xl text-xl transition-all shadow-xl shadow-rose-900/20 flex items-center justify-center gap-3 mt-8">
-                <ShoppingBag className="w-6 h-6" /> অর্ডার কনফার্ম করুন
+              <button 
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-5 rounded-2xl text-xl transition-all shadow-xl shadow-rose-900/20 flex items-center justify-center gap-3 mt-8"
+              >
+                <ShoppingBag className="w-6 h-6" /> {isSubmitting ? "প্রসেসিং..." : "অর্ডার কনফার্ম করুন"}
               </button>
             </form>
+            )}
 
             <div className="mt-12 flex flex-wrap justify-center gap-8 text-stone-500 text-sm font-medium">
               <div className="flex items-center gap-2">
@@ -621,6 +1249,12 @@ export default function App() {
             <span className="text-lg font-bold tracking-tight text-stone-900">Magic Performance</span>
           </div>
           <p className="text-stone-500 text-sm">© ২০২৬ ম্যাজিক পারফরম্যান্স। সর্বস্বত্ব সংরক্ষিত।</p>
+          <button 
+            onClick={() => setIsAdminMode(true)}
+            className="mt-4 text-[10px] text-stone-300 hover:text-stone-400 transition-colors uppercase tracking-[0.2em] font-bold"
+          >
+            Admin Access
+          </button>
         </div>
       </footer>
     </div>
