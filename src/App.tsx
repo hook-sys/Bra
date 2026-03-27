@@ -34,7 +34,10 @@ import {
   doc, onSnapshot, query, orderBy, serverTimestamp, setDoc, getDoc
 } from "firebase/firestore";
 import { 
-  signInWithEmailAndPassword, onAuthStateChanged, signOut 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  onAuthStateChanged, 
+  signOut 
 } from "firebase/auth";
 
 function cn(...inputs: ClassValue[]) {
@@ -66,6 +69,18 @@ export default function App() {
   const [orderSuccess, setOrderSuccess] = useState(false);
   const [isInventoryLoading, setIsInventoryLoading] = useState(false);
   const [isPixelUpdating, setIsPixelUpdating] = useState(false);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryCategory, setInventoryCategory] = useState("All");
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [inventoryForm, setInventoryForm] = useState({
+    name: "",
+    sku: "",
+    category: "General",
+    stock: 0,
+    price: 0,
+    image: ""
+  });
 
   const carouselRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -172,10 +187,24 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (adminEmail === "hmsolyman33@gmail.com" && adminPassword === "87654321") {
+      setIsSubmitting(true);
       try {
+        // Try to sign in
         await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
       } catch (error: any) {
-        alert("Login failed: " + error.message);
+        // If user doesn't exist, try to create it (bootstrap)
+        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+          try {
+            await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
+            alert("Admin account created and logged in!");
+          } catch (signUpError: any) {
+            alert("Login failed: " + signUpError.message);
+          }
+        } else {
+          alert("Login failed: " + error.message);
+        }
+      } finally {
+        setIsSubmitting(false);
       }
     } else {
       alert("Invalid credentials");
@@ -224,6 +253,49 @@ export default function App() {
     } catch (error: any) {
       alert("Update failed: " + error.message);
     }
+  };
+
+  const handleInventorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsInventoryLoading(true);
+    try {
+      if (editingItem) {
+        await updateDoc(doc(db, "inventory", editingItem.id), {
+          ...inventoryForm,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await addDoc(collection(db, "inventory"), {
+          ...inventoryForm,
+          createdAt: serverTimestamp()
+        });
+      }
+      setIsInventoryModalOpen(false);
+      setEditingItem(null);
+      setInventoryForm({ name: "", sku: "", category: "General", stock: 0, price: 0, image: "" });
+    } catch (error: any) {
+      alert("Inventory operation failed: " + error.message);
+    } finally {
+      setIsInventoryLoading(false);
+    }
+  };
+
+  const openInventoryModal = (item: any = null) => {
+    if (item) {
+      setEditingItem(item);
+      setInventoryForm({
+        name: item.name || "",
+        sku: item.sku || "",
+        category: item.category || "General",
+        stock: item.stock || 0,
+        price: item.price || 0,
+        image: item.image || ""
+      });
+    } else {
+      setEditingItem(null);
+      setInventoryForm({ name: "", sku: "", category: "General", stock: 0, price: 0, image: "" });
+    }
+    setIsInventoryModalOpen(true);
   };
 
   const galleryImages = [
@@ -373,9 +445,19 @@ export default function App() {
               </div>
               <button 
                 type="submit"
+                disabled={isSubmitting}
                 className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-rose-200 flex items-center justify-center gap-2"
               >
-                Login to Dashboard <ChevronRight className="w-5 h-5" />
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Logging in...
+                  </>
+                ) : (
+                  <>
+                    Login to Dashboard <ChevronRight className="w-5 h-5" />
+                  </>
+                )}
               </button>
               <button 
                 type="button"
@@ -618,57 +700,130 @@ export default function App() {
 
             {activeTab === 'inventory' && (
               <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold text-stone-900">Inventory Management</h3>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-bold text-stone-900">Inventory Management</h3>
+                    <p className="text-sm text-stone-500">Manage your product stock and details</p>
+                  </div>
                   <button 
-                    onClick={async () => {
-                      const name = prompt("Item Name:");
-                      const stock = prompt("Stock Quantity:");
-                      const price = prompt("Price:");
-                      if(name && stock && price) {
-                        await addDoc(collection(db, "inventory"), { name, stock: parseInt(stock), price: parseInt(price) });
-                      }
-                    }}
-                    className="bg-rose-500 text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2"
+                    onClick={() => openInventoryModal()}
+                    className="bg-rose-500 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-rose-200 hover:bg-rose-600 transition-all"
                   >
-                    <Plus className="w-4 h-4" /> Add Item
+                    <Plus className="w-4 h-4" /> Add New Product
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {inventory.map((item) => (
-                    <div key={item.id} className="bg-white p-6 rounded-3xl border border-stone-100 shadow-sm">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="w-10 h-10 bg-stone-50 rounded-xl flex items-center justify-center">
-                          <Package className="w-5 h-5 text-stone-400" />
-                        </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={async () => {
-                              const newStock = prompt("New Stock:", item.stock);
-                              if(newStock) await updateDoc(doc(db, "inventory", item.id), { stock: parseInt(newStock) });
-                            }}
-                            className="p-2 text-stone-400 hover:text-blue-500"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={async () => {
-                              if(confirm("Delete item?")) await deleteDoc(doc(db, "inventory", item.id));
-                            }}
-                            className="p-2 text-stone-400 hover:text-rose-500"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                      <h4 className="font-bold text-stone-900 mb-1">{item.name}</h4>
-                      <div className="flex items-center justify-between mt-4">
-                        <p className="text-sm text-stone-500">Stock: <span className={cn("font-bold", item.stock < 10 ? "text-rose-500" : "text-green-500")}>{item.stock}</span></p>
-                        <p className="text-lg font-bold text-rose-500">৳{item.price}</p>
-                      </div>
-                    </div>
-                  ))}
+                {/* Filters */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+                    <input 
+                      type="text"
+                      placeholder="Search products..."
+                      value={inventorySearch}
+                      onChange={(e) => setInventorySearch(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 bg-stone-50 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500/20"
+                    />
+                  </div>
+                  <select 
+                    value={inventoryCategory}
+                    onChange={(e) => setInventoryCategory(e.target.value)}
+                    className="bg-stone-50 border-none rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-500/20"
+                  >
+                    <option value="All">All Categories</option>
+                    <option value="General">General</option>
+                    <option value="Clothing">Clothing</option>
+                    <option value="Accessories">Accessories</option>
+                  </select>
+                  <div className="flex items-center justify-end px-2">
+                    <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Total Items: {inventory.length}</p>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl border border-stone-100 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-stone-100 bg-stone-50/50">
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Product</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">SKU</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Category</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Stock</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Price</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Status</th>
+                          <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-100">
+                        {inventory
+                          .filter(item => {
+                            const matchesSearch = item.name?.toLowerCase().includes(inventorySearch.toLowerCase()) || item.sku?.toLowerCase().includes(inventorySearch.toLowerCase());
+                            const matchesCategory = inventoryCategory === "All" || item.category === inventoryCategory;
+                            return matchesSearch && matchesCategory;
+                          })
+                          .map((item) => (
+                          <tr key={item.id} className="hover:bg-stone-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-stone-100 rounded-lg flex items-center justify-center overflow-hidden">
+                                  {item.image ? (
+                                    <img src={item.image} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    <Package className="w-5 h-5 text-stone-400" />
+                                  )}
+                                </div>
+                                <span className="font-bold text-stone-900">{item.name}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-stone-500 font-mono">{item.sku || 'N/A'}</td>
+                            <td className="px-6 py-4">
+                              <span className="px-2 py-1 bg-stone-100 text-stone-600 rounded-md text-[10px] font-bold uppercase">{item.category || 'General'}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "font-bold",
+                                item.stock <= 5 ? "text-rose-500" : item.stock <= 15 ? "text-amber-500" : "text-green-500"
+                              )}>
+                                {item.stock}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 font-bold text-stone-900">৳{item.price}</td>
+                            <td className="px-6 py-4">
+                              {item.stock <= 0 ? (
+                                <span className="px-2 py-1 bg-rose-100 text-rose-600 rounded-full text-[10px] font-bold uppercase">Out of Stock</span>
+                              ) : item.stock <= 10 ? (
+                                <span className="px-2 py-1 bg-amber-100 text-amber-600 rounded-full text-[10px] font-bold uppercase">Low Stock</span>
+                              ) : (
+                                <span className="px-2 py-1 bg-green-100 text-green-600 rounded-full text-[10px] font-bold uppercase">In Stock</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button 
+                                  onClick={() => openInventoryModal(item)}
+                                  className="p-2 text-stone-400 hover:text-blue-500 transition-colors"
+                                  title="Edit Product"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    if(confirm("Delete this product?")) {
+                                      await deleteDoc(doc(db, "inventory", item.id));
+                                    }
+                                  }}
+                                  className="p-2 text-stone-400 hover:text-rose-500 transition-colors"
+                                  title="Delete Product"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -1257,6 +1412,125 @@ export default function App() {
           </button>
         </div>
       </footer>
+
+      {/* Inventory Modal */}
+      <AnimatePresence>
+        {isInventoryModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsInventoryModalOpen(false)}
+              className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-8 shadow-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-2xl font-bold text-stone-900">
+                  {editingItem ? 'Edit Product' : 'Add New Product'}
+                </h3>
+                <button 
+                  onClick={() => setIsInventoryModalOpen(false)}
+                  className="p-2 hover:bg-stone-100 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6 text-stone-400" />
+                </button>
+              </div>
+
+              <form onSubmit={handleInventorySubmit} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Product Name</label>
+                  <input 
+                    type="text"
+                    required
+                    value={inventoryForm.name}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, name: e.target.value })}
+                    className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    placeholder="e.g. Magic Sports Bra"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">SKU</label>
+                    <input 
+                      type="text"
+                      value={inventoryForm.sku}
+                      onChange={(e) => setInventoryForm({ ...inventoryForm, sku: e.target.value })}
+                      className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                      placeholder="SKU-001"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Category</label>
+                    <select 
+                      value={inventoryForm.category}
+                      onChange={(e) => setInventoryForm({ ...inventoryForm, category: e.target.value })}
+                      className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    >
+                      <option value="General">General</option>
+                      <option value="Clothing">Clothing</option>
+                      <option value="Accessories">Accessories</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Stock Quantity</label>
+                    <input 
+                      type="number"
+                      required
+                      value={inventoryForm.stock}
+                      onChange={(e) => setInventoryForm({ ...inventoryForm, stock: parseInt(e.target.value) })}
+                      className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Price (৳)</label>
+                    <input 
+                      type="number"
+                      required
+                      value={inventoryForm.price}
+                      onChange={(e) => setInventoryForm({ ...inventoryForm, price: parseInt(e.target.value) })}
+                      className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Image URL (Optional)</label>
+                  <input 
+                    type="url"
+                    value={inventoryForm.image}
+                    onChange={(e) => setInventoryForm({ ...inventoryForm, image: e.target.value })}
+                    className="w-full bg-stone-50 border border-stone-100 rounded-2xl px-5 py-3 outline-none focus:ring-2 focus:ring-rose-500/20 transition-all"
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isInventoryLoading}
+                  className="w-full bg-rose-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-rose-200 hover:bg-rose-600 transition-all flex items-center justify-center gap-2"
+                >
+                  {isInventoryLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Save className="w-5 h-5" />
+                  )}
+                  {editingItem ? 'Update Product' : 'Save Product'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
